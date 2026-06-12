@@ -417,6 +417,11 @@ export default function App() {
   }
 
   async function deleteItem(id) {
+    const item = items.find(i => i.id === id);
+    if (item?.image) {
+      const path = item.image.split(`/storage/v1/object/public/images/`)[1];
+      if (path) await supabase.storage.from("images").remove([path]);
+    }
     await supabase.from("items").delete().eq("id", id);
     setItems(prev => prev.filter(i => i.id !== id));
   }
