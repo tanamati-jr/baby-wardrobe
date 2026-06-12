@@ -8,10 +8,27 @@ const supabase = createClient(
 
 const STORAGE_BUCKET = "images";
 
+async function compressImage(file, maxWidth = 800, quality = 0.7) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => resolve(blob), "image/jpeg", quality);
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  });
+}
+
 async function uploadImage(file) {
-  const ext = file.name.split(".").pop();
-  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { upsert: false });
+  const compressed = await compressImage(file);
+  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, compressed, { upsert: false, contentType: "image/jpeg" });
   if (error) { console.error("Upload error:", error); return null; }
   const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
   return data.publicUrl;
@@ -42,8 +59,18 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const DEFAULT_SIZES = ["Preemie","Newborn","0–3m","3–6m","6–9m","9–12m","12–18m","18–24m","2T","3T","4T","One Size"];
+const SIZE_ORDER = Object.fromEntries(DEFAULT_SIZES.map((s,i)=>[s,i]));
 const PALETTE = ["#ffd6e0","#ffecd2","#d6eaff","#c8f0d0","#fff4cc","#d9f5ff","#f9d6ff","#d6ffe8","#ffe8d6","#edd9ff","#ffd6f5","#d6f0ff","#ddffd6","#fff0d6","#d6f9ff","#ffd6d6","#e8d6ff","#fef3c7","#cffafe","#e0e7ff"];
 const EMOJIS = ["👶","🩱","😴","👖","🩳","👕","👗","🐸","🧥","🧶","🧦","🎩","🧤","👟","🏊","🍼","🌙","🛏","🏖","🎒","🧸","🎀","🌈","⭐","🦋","🐣","🐥","🌸","🍭","🎁"];
+
+const SORT_OPTIONS = [
+  { value: "type_asc",    label: "Type A–Z" },
+  { value: "size_asc",    label: "Size ↑" },
+  { value: "size_desc",   label: "Size ↓" },
+  { value: "owned_desc",  label: "Most owned" },
+  { value: "owned_asc",   label: "Least owned" },
+  { value: "needed_desc", label: "Most needed" },
+];
 
 const groupKey = (type, size) => `${type}::${size}`;
 
@@ -56,6 +83,34 @@ function groupItems(items) {
   }
   for (const g of Object.values(groups)) g.owned = g.items.reduce((s,i)=>s+i.qty,0);
   return groups;
+}
+
+function sortGroups(groups, sortBy) {
+  return [...groups].sort((a, b) => {
+    switch (sortBy) {
+      case "type_asc":   return a.type.localeCompare(b.type);
+      case "size_asc":   return (SIZE_ORDER[a.size]??99) - (SIZE_ORDER[b.size]??99);
+      case "size_desc":  return (SIZE_ORDER[b.size]??99) - (SIZE_ORDER[a.size]??99);
+      case "owned_desc": return b.owned - a.owned;
+      case "owned_asc":  return a.owned - b.owned;
+      case "needed_desc": {
+        const an = Math.max(0,(a.goal??0)-a.owned), bn = Math.max(0,(b.goal??0)-b.owned);
+        return bn - an;
+      }
+      default: return 0;
+    }
+  });
+}
+
+// ─── Lightbox ────────────────────────────────────────────────────────────────
+function Lightbox({ src, onClose }) {
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:16,objectFit:"contain",boxShadow:"0 8px 40px rgba(0,0,0,0.5)"}} />
+      <button onClick={onClose} style={{position:"absolute",top:20,right:20,background:"rgba(255,255,255,0.15)",border:"none",borderRadius:"50%",width:40,height:40,color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+      <div style={{position:"absolute",bottom:24,color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:700}}>Tap anywhere to close</div>
+    </div>
+  );
 }
 
 // ─── Manage Categories ───────────────────────────────────────────────────────
@@ -146,9 +201,7 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
     if (!type) return;
     setSaving(true);
     let imageUrl = null;
-    if (imageFile) {
-      imageUrl = await uploadImage(imageFile);
-    }
+    if (imageFile) imageUrl = await uploadImage(imageFile);
     await onAdd({ id: Date.now(), type, size, qty: Number(qty), label, image: imageUrl });
     setSaving(false);
     onClose();
@@ -182,13 +235,13 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
         <Field label="Quantity">
           <QCounter value={qty} onChange={setQty} />
         </Field>
-        {saving && (
+        {saving&&(
           <div style={{textAlign:"center",padding:"8px",fontSize:13,color:"#9b8ec4",fontWeight:700,marginBottom:8}}>
-            {imageFile ? "📤 Uploading photo…" : "💾 Saving…"}
+            {imageFile?"📤 Uploading photo…":"💾 Saving…"}
           </div>
         )}
         <PrimaryBtn onClick={submit} style={{marginTop:4}} disabled={saving}>
-          {saving ? "Please wait…" : "Add to Wardrobe 🎀"}
+          {saving?"Please wait…":"Add to Wardrobe 🎀"}
         </PrimaryBtn>
       </Sheet>
     </Overlay>
@@ -216,10 +269,10 @@ function GoalModal({ group, catMap, onSave, onClose }) {
 }
 
 // ─── Detail Drawer ───────────────────────────────────────────────────────────
-function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal }) {
-  const toBuy = Math.max(0,(group.goal??0)-group.owned);
-  const hasGoal = (group.goal??0)>0;
-  const cat = catMap[group.type]||{};
+function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal, onLightbox }) {
+  const toBuy=Math.max(0,(group.goal??0)-group.owned);
+  const hasGoal=(group.goal??0)>0;
+  const cat=catMap[group.type]||{};
   return (
     <Overlay onBgClick={onClose}>
       <Sheet style={{maxHeight:"85vh",overflowY:"auto"}}>
@@ -257,8 +310,17 @@ function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal }) {
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
           {group.items.map(item=>(
             <div key={item.id} style={{borderRadius:16,overflow:"hidden",background:"#faf8ff",border:"1.5px solid #f0eaff",position:"relative"}}>
-              <div style={{height:90,background:cat.color||"#f0eaff",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                {item.image?<img src={item.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:32}}>{cat.emoji||"📦"}</span>}
+              <div
+                onClick={item.image ? e=>{e.stopPropagation();onLightbox(item.image);} : undefined}
+                style={{height:90,background:cat.color||"#f0eaff",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:item.image?"zoom-in":"default",position:"relative"}}
+              >
+                {item.image
+                  ? <>
+                      <img src={item.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                      <div style={{position:"absolute",bottom:5,right:5,background:"rgba(0,0,0,0.35)",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>🔍</div>
+                    </>
+                  : <span style={{fontSize:32}}>{cat.emoji||"📦"}</span>
+                }
               </div>
               <div style={{padding:"8px 10px 10px"}}>
                 <div style={{fontSize:12,fontWeight:800,color:"#2d1f5e",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{item.label||item.type}</div>
@@ -382,6 +444,9 @@ export default function App() {
   const [goalFor, setGoalFor] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterSize, setFilterSize] = useState("All");
+  const [sortBy, setSortBy] = useState("size_asc");
+  const [showSort, setShowSort] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -440,9 +505,15 @@ export default function App() {
 
   const usedTypes = ["All",...categories.filter(c=>Object.values(groups).some(g=>g.type===c.name)).map(c=>c.name)];
   const usedSizes = ["All",...sizes.filter(s=>Object.values(groups).some(g=>g.size===s))];
-  const filtered = Object.values(groups).filter(g=>(filterType==="All"||g.type===filterType)&&(filterSize==="All"||g.size===filterSize));
+
+  const filtered = sortGroups(
+    Object.values(groups).filter(g=>(filterType==="All"||g.type===filterType)&&(filterSize==="All"||g.size===filterSize)),
+    sortBy
+  );
+
   const totalOwned = Object.values(groups).reduce((s,g)=>s+g.owned,0);
   const totalToBuy = Object.values(groups).filter(g=>g.goal>0&&g.owned<g.goal).reduce((s,g)=>s+Math.max(0,g.goal-g.owned),0);
+  const currentSort = SORT_OPTIONS.find(o=>o.value===sortBy);
 
   if (screen==="manage") return (
     <>
@@ -492,13 +563,20 @@ export default function App() {
                 </button>
               ))}
             </div>
+
             {tab==="wardrobe"&&(<>
               {Object.keys(groups).length>0&&(<>
                 <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:6}}>
                   {usedTypes.map(t=><button key={t} onClick={()=>setFilterType(t)} style={{flexShrink:0,padding:"5px 12px",borderRadius:20,border:"none",background:filterType===t?"#7c3aed":"#fff",color:filterType===t?"#fff":"#999",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>{t}</button>)}
                 </div>
-                <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:14}}>
+                <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:10}}>
                   {usedSizes.map(s=><button key={s} onClick={()=>setFilterSize(s)} style={{flexShrink:0,padding:"5px 12px",borderRadius:20,border:"none",background:filterSize===s?"#7ec8ff":"#fff",color:filterSize===s?"#fff":"#999",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>{s}</button>)}
+                </div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:14,gap:8}}>
+                  <span style={{fontSize:11,fontWeight:700,color:"#bbb"}}>Sort:</span>
+                  <button onClick={()=>setShowSort(true)} style={{background:"#fff",border:"1.5px solid #ede8ff",borderRadius:20,padding:"5px 14px",fontSize:12,fontWeight:800,color:"#7c3aed",cursor:"pointer",fontFamily:"'Nunito',sans-serif",display:"flex",alignItems:"center",gap:4}}>
+                    {currentSort?.label} ▾
+                  </button>
                 </div>
               </>)}
               {filtered.length===0
@@ -513,15 +591,35 @@ export default function App() {
         </div>
       </div>
 
+      {/* FAB */}
       <button onClick={()=>setShowAdd(true)} style={{position:"fixed",bottom:24,right:20,width:58,height:58,borderRadius:"50%",background:"linear-gradient(135deg,#b79cff,#7ec8ff)",border:"none",color:"#fff",fontSize:28,cursor:"pointer",boxShadow:"0 6px 24px rgba(130,100,255,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>＋</button>
+
+      {/* Sort picker */}
+      {showSort&&(
+        <Overlay onBgClick={()=>setShowSort(false)}>
+          <Sheet>
+            <Pill />
+            <div style={{fontSize:15,fontWeight:900,color:"#2d1f5e",marginBottom:14}}>Sort by</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {SORT_OPTIONS.map(opt=>(
+                <button key={opt.value} onClick={()=>{setSortBy(opt.value);setShowSort(false);}} style={{padding:"12px 16px",borderRadius:14,border:"none",textAlign:"left",background:sortBy===opt.value?"#f0eaff":"#faf8ff",color:sortBy===opt.value?"#7c3aed":"#2d1f5e",fontWeight:sortBy===opt.value?900:700,fontSize:14,cursor:"pointer",fontFamily:"'Nunito',sans-serif",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  {opt.label}
+                  {sortBy===opt.value&&<span style={{color:"#7c3aed"}}>✓</span>}
+                </button>
+              ))}
+            </div>
+          </Sheet>
+        </Overlay>
+      )}
 
       {showAdd&&<AddModal categories={categories} sizes={sizes} onAdd={addItem} onClose={()=>setShowAdd(false)} />}
       {liveDetail&&!goalFor&&(
-        <DetailDrawer group={liveDetail} catMap={catMap} onClose={()=>setDetail(null)} onDeleteItem={id=>{deleteItem(id);if(liveDetail.items.length<=1)setDetail(null);}} onSetGoal={()=>setGoalFor(liveDetail)} />
+        <DetailDrawer group={liveDetail} catMap={catMap} onClose={()=>setDetail(null)} onDeleteItem={id=>{deleteItem(id);if(liveDetail.items.length<=1)setDetail(null);}} onSetGoal={()=>setGoalFor(liveDetail)} onLightbox={src=>setLightbox(src)} />
       )}
       {goalFor&&(
         <GoalModal group={goalFor} catMap={catMap} onSave={goal=>saveGoal(goalFor.type,goalFor.size,goal)} onClose={()=>setGoalFor(null)} />
       )}
+      {lightbox&&<Lightbox src={lightbox} onClose={()=>setLightbox(null)} />}
     </>
   );
 }
