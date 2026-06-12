@@ -3,12 +3,19 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
-  {
-    db: { schema: "public" },
-    global: { fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(30000) }) }
-  }
+  import.meta.env.VITE_SUPABASE_ANON_KEY
 );
+
+const STORAGE_BUCKET = "images";
+
+async function uploadImage(file) {
+  const ext = file.name.split(".").pop();
+  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { upsert: false });
+  if (error) { console.error("Upload error:", error); return null; }
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
 
 // ─── Default data ────────────────────────────────────────────────────────────
 const DEFAULT_CATEGORIES = [
@@ -51,7 +58,7 @@ function groupItems(items) {
   return groups;
 }
 
-// ─── Manage Categories Screen ────────────────────────────────────────────────
+// ─── Manage Categories ───────────────────────────────────────────────────────
 function ManageCategories({ categories, onSave, onClose }) {
   const [cats, setCats] = useState(categories.map(c=>({...c})));
   const [adding, setAdding] = useState(false);
@@ -81,25 +88,21 @@ function ManageCategories({ categories, onSave, onClose }) {
         <button onClick={()=>{onSave(cats);onClose();}} style={{background:"rgba(255,255,255,0.25)",border:"none",borderRadius:12,padding:"6px 14px",color:"#fff",fontWeight:900,fontSize:14,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>Save</button>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px 14px"}}>
-        {!adding && editingIdx===null && (
+        {!adding&&editingIdx===null&&(
           <button onClick={()=>setAdding(true)} style={{width:"100%",padding:"12px",borderRadius:14,border:"2px dashed #c4b5fd",background:"none",color:"#7c3aed",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"'Nunito',sans-serif",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>＋ Add new category</button>
         )}
-        {(adding||editingIdx!==null) && (
+        {(adding||editingIdx!==null)&&(
           <div style={{background:"#fff",borderRadius:18,padding:16,marginBottom:16,boxShadow:"0 2px 14px rgba(0,0,0,0.08)"}}>
             <div style={{fontSize:13,fontWeight:800,color:"#7c3aed",marginBottom:12}}>{editingIdx!==null?"Edit category":"New category"}</div>
             <label style={lbl}>Name</label>
             <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Blanket" style={{...sinp,marginBottom:12}} />
             <label style={lbl}>Emoji</label>
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
-              {EMOJIS.map(e=>(
-                <button key={e} onClick={()=>setNewEmoji(e)} style={{width:34,height:34,borderRadius:10,border:newEmoji===e?"2px solid #7c3aed":"1.5px solid #ede8ff",background:newEmoji===e?"#f0eaff":"#faf8ff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{e}</button>
-              ))}
+              {EMOJIS.map(e=><button key={e} onClick={()=>setNewEmoji(e)} style={{width:34,height:34,borderRadius:10,border:newEmoji===e?"2px solid #7c3aed":"1.5px solid #ede8ff",background:newEmoji===e?"#f0eaff":"#faf8ff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{e}</button>)}
             </div>
             <label style={lbl}>Color</label>
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-              {PALETTE.map(c=>(
-                <button key={c} onClick={()=>setNewColor(c)} style={{width:28,height:28,borderRadius:"50%",background:c,border:newColor===c?"3px solid #7c3aed":"2px solid rgba(0,0,0,0.08)",cursor:"pointer"}} />
-              ))}
+              {PALETTE.map(c=><button key={c} onClick={()=>setNewColor(c)} style={{width:28,height:28,borderRadius:"50%",background:c,border:newColor===c?"3px solid #7c3aed":"2px solid rgba(0,0,0,0.08)",cursor:"pointer"}} />)}
             </div>
             <div style={{display:"flex",gap:8}}>
               <button onClick={()=>{setAdding(false);setEditingIdx(null);setNewName("");setNewEmoji("🧸");setNewColor(PALETTE[0]);}} style={{flex:1,padding:"10px",borderRadius:12,border:"1.5px solid #ede8ff",background:"#fff",color:"#9b8ec4",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>Cancel</button>
@@ -128,18 +131,25 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
   const [size, setSize] = useState(sizes[0]||"");
   const [qty, setQty] = useState(1);
   const [label, setLabel] = useState("");
-  const [image, setImage] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef();
 
   function handleImg(e) {
     const file = e.target.files[0]; if (!file) return;
-    const r = new FileReader(); r.onload = ev=>setImage(ev.target.result); r.readAsDataURL(file);
+    setImageFile(file);
+    const r = new FileReader(); r.onload = ev=>setImagePreview(ev.target.result); r.readAsDataURL(file);
   }
+
   async function submit() {
     if (!type) return;
     setSaving(true);
-    await onAdd({ id:Date.now(), type, size, qty:Number(qty), label, image });
+    let imageUrl = null;
+    if (imageFile) {
+      imageUrl = await uploadImage(imageFile);
+    }
+    await onAdd({ id: Date.now(), type, size, qty: Number(qty), label, image: imageUrl });
     setSaving(false);
     onClose();
   }
@@ -152,7 +162,7 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
           <h2 style={sh2}>Add Item</h2>
           <XBtn onClick={onClose} />
         </RowBetween>
-        <ImgPicker image={image} onClick={()=>fileRef.current.click()} />
+        <ImgPicker image={imagePreview} onClick={()=>fileRef.current.click()} />
         <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleImg} />
         <Field label="Label (optional)">
           <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Star print socks" style={sinp} />
@@ -172,8 +182,13 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
         <Field label="Quantity">
           <QCounter value={qty} onChange={setQty} />
         </Field>
-        <PrimaryBtn onClick={submit} style={{marginTop:8}} disabled={saving}>
-          {saving ? "Saving…" : "Add to Wardrobe 🎀"}
+        {saving && (
+          <div style={{textAlign:"center",padding:"8px",fontSize:13,color:"#9b8ec4",fontWeight:700,marginBottom:8}}>
+            {imageFile ? "📤 Uploading photo…" : "💾 Saving…"}
+          </div>
+        )}
+        <PrimaryBtn onClick={submit} style={{marginTop:4}} disabled={saving}>
+          {saving ? "Please wait…" : "Add to Wardrobe 🎀"}
         </PrimaryBtn>
       </Sheet>
     </Overlay>
@@ -228,7 +243,7 @@ function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal }) {
             </div>
           ))}
         </div>
-        {hasGoal && (
+        {hasGoal&&(
           <div style={{marginBottom:18}}>
             <div style={{height:8,borderRadius:8,background:"#f0eaff",overflow:"hidden"}}>
               <div style={{height:"100%",width:`${Math.min(100,Math.round((group.owned/group.goal)*100))}%`,borderRadius:8,background:group.owned>=group.goal?"#6ee7b7":"linear-gradient(90deg,#b79cff,#7ec8ff)",transition:"width 0.3s"}} />
@@ -260,12 +275,10 @@ function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal }) {
 
 // ─── Group Card ──────────────────────────────────────────────────────────────
 function GroupCard({ group, cat, onClick }) {
-  const owned = group.owned;
-  const goal = group.goal??0;
-  const toBuy = Math.max(0,goal-owned);
-  const pct = goal>0?Math.min(100,Math.round((owned/goal)*100)):null;
-  const isComplete = goal>0&&owned>=goal;
-  const previewImgs = group.items.filter(i=>i.image).slice(0,3);
+  const owned=group.owned, goal=group.goal??0, toBuy=Math.max(0,goal-owned);
+  const pct=goal>0?Math.min(100,Math.round((owned/goal)*100)):null;
+  const isComplete=goal>0&&owned>=goal;
+  const previewImgs=group.items.filter(i=>i.image).slice(0,3);
   return (
     <div onClick={onClick} style={{background:"#fff",borderRadius:20,overflow:"hidden",boxShadow:"0 2px 14px rgba(0,0,0,0.07)",cursor:"pointer",userSelect:"none"}}>
       <div style={{height:80,background:cat?.color||"#f0eaff",position:"relative",overflow:"hidden",display:"flex"}}>
@@ -292,15 +305,15 @@ function GroupCard({ group, cat, onClick }) {
 
 // ─── Shopping List ───────────────────────────────────────────────────────────
 function ShoppingList({ groups, catMap }) {
-  const needed = Object.values(groups).filter(g=>(g.goal??0)>0&&g.owned<g.goal);
+  const needed=Object.values(groups).filter(g=>(g.goal??0)>0&&g.owned<g.goal);
   if (!needed.length) return <Empty icon="🎉" title="You're all stocked up!" sub="Set targets on items to track what to buy." />;
   return (
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
       {needed.map(g=>{
-        const toBuy=g.goal-g.owned; const cat=catMap[g.type]||{};
+        const toBuy=g.goal-g.owned, cat=catMap[g.type]||{};
         return (
           <div key={groupKey(g.type,g.size)} style={{background:"#fff",borderRadius:16,padding:"13px 14px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 10px rgba(0,0,0,0.06)"}}>
-            <div style={{width:48,height:48,borderRadius:14,background:cat.color||"#f0eaff",flexShrink:0,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+            <div style={{width:48,height:48,borderRadius:14,background:cat.color||"#f0eaff",flexShrink:0,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
               {g.items.find(i=>i.image)?<img src={g.items.find(i=>i.image).image} alt="" style={{width:"100%",height:"100%",objectFit:"cover",opacity:0.7}} />:<span style={{fontSize:24}}>{cat.emoji||"📦"}</span>}
             </div>
             <div style={{flex:1,minWidth:0}}>
@@ -370,7 +383,6 @@ export default function App() {
   const [filterType, setFilterType] = useState("All");
   const [filterSize, setFilterSize] = useState("All");
 
-  // ── Load data from Supabase on mount ──
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -388,7 +400,6 @@ export default function App() {
     }
     load();
 
-    // ── Realtime sync ──
     const channel = supabase.channel("realtime-sync")
       .on("postgres_changes", { event: "*", schema: "public", table: "items" }, () => load())
       .on("postgres_changes", { event: "*", schema: "public", table: "goals" }, () => load())
@@ -463,12 +474,12 @@ export default function App() {
         </div>
 
         <div style={{padding:"18px 14px 0"}}>
-          {loading ? (
+          {loading?(
             <div style={{textAlign:"center",padding:"60px 20px",color:"#c4b5fd"}}>
               <div style={{fontSize:36,marginBottom:12}}>🎀</div>
               <div style={{fontWeight:800,fontSize:15}}>Loading your wardrobe…</div>
             </div>
-          ) : (<>
+          ):(<>
             <div style={{display:"flex",gap:6,marginBottom:18,background:"#ece6ff",borderRadius:14,padding:4}}>
               {["wardrobe","shopping"].map(t=>(
                 <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",cursor:"pointer",fontFamily:"'Nunito',sans-serif",fontWeight:800,fontSize:13,background:tab===t?"#fff":"transparent",color:tab===t?"#7c3aed":"#bbb",boxShadow:tab===t?"0 2px 8px rgba(0,0,0,0.08)":"none",transition:"all 0.2s"}}>
@@ -476,7 +487,6 @@ export default function App() {
                 </button>
               ))}
             </div>
-
             {tab==="wardrobe"&&(<>
               {Object.keys(groups).length>0&&(<>
                 <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:6}}>
