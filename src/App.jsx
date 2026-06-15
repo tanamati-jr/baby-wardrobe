@@ -111,16 +111,27 @@ function ManageCategories({ categories, onSave, onClose }) {
     setNewName(""); setNewEmoji("🧸"); setNewColor(PALETTE[0]); setAdding(false);
   }
 
-  async function handleSave() {
+    async function handleSave() {
     setSaving(true);
-    // Delete all and reinsert to keep it simple
+    // Find renamed categories by comparing with originals
+    for (let i = 0; i < cats.length; i++) {
+      const original = categories[i];
+      const updated = cats[i];
+      if (original && original.name !== updated.name) {
+        // Update all items that used the old name
+        await supabase.from("items").update({ type: updated.name }).eq("type", original.name);
+      }
+    }
+    // Save categories
     await supabase.from("categories").delete().neq("id", 0);
-    const rows = cats.map((c,i)=>({ name:c.name, emoji:c.emoji, color:c.color, sort_order:i }));
+    const sorted = [...cats].sort((a,b)=>a.name.localeCompare(b.name));
+    const rows = sorted.map((c,i)=>({ name:c.name, emoji:c.emoji, color:c.color, sort_order:i }));
     await supabase.from("categories").insert(rows);
-    onSave(cats);
+    onSave(sorted);
     setSaving(false);
     onClose();
   }
+
 
   return (
     <div style={{position:"fixed",inset:0,background:"#f4f0ff",zIndex:300,display:"flex",flexDirection:"column",fontFamily:"'Nunito',sans-serif",maxWidth:480,margin:"0 auto"}}>
@@ -450,8 +461,8 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     const [{ data: catsData }, { data: itemsData }, { data: goalsData }] = await Promise.all([
-      supabase.from("categories").select("*").order("sort_order"),
-      supabase.from("items").select("*").order("created_at", { ascending: false }),
+      supabase.from("categories").select("*").order("name"),
+     supabase.from("items").select("*").order("created_at", { ascending: false }),
       supabase.from("goals").select("*"),
     ]);
     if (catsData) setCategories(catsData);
