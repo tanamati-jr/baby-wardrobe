@@ -34,42 +34,17 @@ async function uploadImage(file) {
   return data.publicUrl;
 }
 
-// ─── Default data ────────────────────────────────────────────────────────────
-const DEFAULT_CATEGORIES = [
-  {name:"Onesie",    emoji:"👶", color:"#ffd6e0"},
-  {name:"Bodysuit",  emoji:"🩱", color:"#ffecd2"},
-  {name:"Pajamas",   emoji:"😴", color:"#d6eaff"},
-  {name:"Pants",     emoji:"👖", color:"#c8f0d0"},
-  {name:"Shorts",    emoji:"🩳", color:"#fff4cc"},
-  {name:"Shirt",     emoji:"👕", color:"#d9f5ff"},
-  {name:"Dress",     emoji:"👗", color:"#f9d6ff"},
-  {name:"Romper",    emoji:"🐸", color:"#d6ffe8"},
-  {name:"Jacket",    emoji:"🧥", color:"#ffe8d6"},
-  {name:"Cardigan",  emoji:"🧶", color:"#edd9ff"},
-  {name:"Socks",     emoji:"🧦", color:"#ffd6f5"},
-  {name:"Hat",       emoji:"🎩", color:"#d6f0ff"},
-  {name:"Mittens",   emoji:"🧤", color:"#ddffd6"},
-  {name:"Shoes",     emoji:"👟", color:"#fff0d6"},
-  {name:"Swimsuit",  emoji:"🏊", color:"#d6f9ff"},
-  {name:"Bibs",      emoji:"🍼", color:"#ffd6d6"},
-  {name:"Sleepsuit", emoji:"🌙", color:"#e8d6ff"},
-  {name:"Blanket",   emoji:"🛏", color:"#fef3c7"},
-  {name:"Towel",     emoji:"🏖", color:"#cffafe"},
-  {name:"Bag",       emoji:"🎒", color:"#e0e7ff"},
-];
-
 const DEFAULT_SIZES = ["Preemie","Newborn","0–3m","3–6m","6–9m","9–12m","12–18m","18–24m","2T","3T","4T","One Size"];
 const SIZE_ORDER = Object.fromEntries(DEFAULT_SIZES.map((s,i)=>[s,i]));
 const PALETTE = ["#ffd6e0","#ffecd2","#d6eaff","#c8f0d0","#fff4cc","#d9f5ff","#f9d6ff","#d6ffe8","#ffe8d6","#edd9ff","#ffd6f5","#d6f0ff","#ddffd6","#fff0d6","#d6f9ff","#ffd6d6","#e8d6ff","#fef3c7","#cffafe","#e0e7ff"];
 const EMOJIS = ["👶","🩱","😴","👖","🩳","👕","👗","🐸","🧥","🧶","🧦","🎩","🧤","👟","🏊","🍼","🌙","🛏","🏖","🎒","🧸","🎀","🌈","⭐","🦋","🐣","🐥","🌸","🍭","🎁"];
-
 const SORT_OPTIONS = [
-  { value: "type_asc",    label: "Type A–Z" },
-  { value: "size_asc",    label: "Size ↑" },
-  { value: "size_desc",   label: "Size ↓" },
-  { value: "owned_desc",  label: "Most owned" },
-  { value: "owned_asc",   label: "Least owned" },
-  { value: "needed_desc", label: "Most needed" },
+  { value:"type_asc",    label:"Type A–Z" },
+  { value:"size_asc",    label:"Size ↑" },
+  { value:"size_desc",   label:"Size ↓" },
+  { value:"owned_desc",  label:"Most owned" },
+  { value:"owned_asc",   label:"Least owned" },
+  { value:"needed_desc", label:"Most needed" },
 ];
 
 const groupKey = (type, size) => `${type}::${size}`;
@@ -88,15 +63,12 @@ function groupItems(items) {
 function sortGroups(groups, sortBy) {
   return [...groups].sort((a, b) => {
     switch (sortBy) {
-      case "type_asc":   return a.type.localeCompare(b.type);
-      case "size_asc":   return (SIZE_ORDER[a.size]??99) - (SIZE_ORDER[b.size]??99);
-      case "size_desc":  return (SIZE_ORDER[b.size]??99) - (SIZE_ORDER[a.size]??99);
-      case "owned_desc": return b.owned - a.owned;
-      case "owned_asc":  return a.owned - b.owned;
-      case "needed_desc": {
-        const an = Math.max(0,(a.goal??0)-a.owned), bn = Math.max(0,(b.goal??0)-b.owned);
-        return bn - an;
-      }
+      case "type_asc":    return a.type.localeCompare(b.type);
+      case "size_asc":    return (SIZE_ORDER[a.size]??99)-(SIZE_ORDER[b.size]??99);
+      case "size_desc":   return (SIZE_ORDER[b.size]??99)-(SIZE_ORDER[a.size]??99);
+      case "owned_desc":  return b.owned-a.owned;
+      case "owned_asc":   return a.owned-b.owned;
+      case "needed_desc": return Math.max(0,(b.goal??0)-b.owned)-Math.max(0,(a.goal??0)-a.owned);
       default: return 0;
     }
   });
@@ -121,18 +93,33 @@ function ManageCategories({ categories, onSave, onClose }) {
   const [newEmoji, setNewEmoji] = useState("🧸");
   const [newColor, setNewColor] = useState(PALETTE[0]);
   const [editingIdx, setEditingIdx] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   function startEdit(i) { setEditingIdx(i); setNewName(cats[i].name); setNewEmoji(cats[i].emoji); setNewColor(cats[i].color); }
+
   function saveEdit() {
     if (!newName.trim()) return;
     setCats(prev=>prev.map((c,i)=>i===editingIdx?{...c,name:newName.trim(),emoji:newEmoji,color:newColor}:c));
     setEditingIdx(null); setNewName(""); setNewEmoji("🧸"); setNewColor(PALETTE[0]);
   }
+
   function deleteAt(i) { setCats(prev=>prev.filter((_,j)=>j!==i)); if(editingIdx===i) setEditingIdx(null); }
+
   function addNew() {
     if (!newName.trim()) return;
     setCats(prev=>[...prev,{name:newName.trim(),emoji:newEmoji,color:newColor}]);
     setNewName(""); setNewEmoji("🧸"); setNewColor(PALETTE[0]); setAdding(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    // Delete all and reinsert to keep it simple
+    await supabase.from("categories").delete().neq("id", 0);
+    const rows = cats.map((c,i)=>({ name:c.name, emoji:c.emoji, color:c.color, sort_order:i }));
+    await supabase.from("categories").insert(rows);
+    onSave(cats);
+    setSaving(false);
+    onClose();
   }
 
   return (
@@ -140,7 +127,9 @@ function ManageCategories({ categories, onSave, onClose }) {
       <div style={{background:"linear-gradient(135deg,#b79cff,#7ec8ff)",padding:"20px 18px 16px",display:"flex",alignItems:"center",gap:12}}>
         <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",borderRadius:12,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>← Back</button>
         <div style={{flex:1,fontSize:18,fontWeight:900,color:"#fff"}}>Manage Categories</div>
-        <button onClick={()=>{onSave(cats);onClose();}} style={{background:"rgba(255,255,255,0.25)",border:"none",borderRadius:12,padding:"6px 14px",color:"#fff",fontWeight:900,fontSize:14,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>Save</button>
+        <button onClick={handleSave} disabled={saving} style={{background:"rgba(255,255,255,0.25)",border:"none",borderRadius:12,padding:"6px 14px",color:"#fff",fontWeight:900,fontSize:14,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>
+          {saving?"Saving…":"Save"}
+        </button>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px 14px"}}>
         {!adding&&editingIdx===null&&(
@@ -180,14 +169,15 @@ function ManageCategories({ categories, onSave, onClose }) {
   );
 }
 
-// ─── Add Item Modal ──────────────────────────────────────────────────────────
-function AddModal({ categories, sizes, onAdd, onClose }) {
-  const [type, setType] = useState(categories[0]?.name||"");
-  const [size, setSize] = useState(sizes[0]||"");
-  const [qty, setQty] = useState(1);
-  const [label, setLabel] = useState("");
+// ─── Add / Edit Item Modal ───────────────────────────────────────────────────
+function ItemModal({ categories, sizes, item, onSave, onClose }) {
+  const editing = !!item;
+  const [type, setType] = useState(item?.type || categories[0]?.name || "");
+  const [size, setSize] = useState(item?.size || sizes[0] || "");
+  const [qty, setQty] = useState(item?.qty || 1);
+  const [label, setLabel] = useState(item?.label || "");
   const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  const [imagePreview, setImagePreview] = useState(item?.image || null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef();
 
@@ -200,9 +190,16 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
   async function submit() {
     if (!type) return;
     setSaving(true);
-    let imageUrl = null;
-    if (imageFile) imageUrl = await uploadImage(imageFile);
-    await onAdd({ id: Date.now(), type, size, qty: Number(qty), label, image: imageUrl });
+    let imageUrl = item?.image || null;
+    if (imageFile) {
+      // Delete old image if replacing
+      if (item?.image) {
+        const oldPath = item.image.split(`/storage/v1/object/public/images/`)[1];
+        if (oldPath) await supabase.storage.from("images").remove([oldPath]);
+      }
+      imageUrl = await uploadImage(imageFile);
+    }
+    await onSave({ ...item, type, size, qty: Number(qty), label, image: imageUrl });
     setSaving(false);
     onClose();
   }
@@ -212,7 +209,7 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
       <Sheet style={{maxHeight:"90vh",overflowY:"auto"}}>
         <Pill />
         <RowBetween>
-          <h2 style={sh2}>Add Item</h2>
+          <h2 style={sh2}>{editing?"Edit Item":"Add Item"}</h2>
           <XBtn onClick={onClose} />
         </RowBetween>
         <ImgPicker image={imagePreview} onClick={()=>fileRef.current.click()} />
@@ -241,7 +238,7 @@ function AddModal({ categories, sizes, onAdd, onClose }) {
           </div>
         )}
         <PrimaryBtn onClick={submit} style={{marginTop:4}} disabled={saving}>
-          {saving?"Please wait…":"Add to Wardrobe 🎀"}
+          {saving?"Please wait…":editing?"Save Changes 💾":"Add to Wardrobe 🎀"}
         </PrimaryBtn>
       </Sheet>
     </Overlay>
@@ -269,7 +266,7 @@ function GoalModal({ group, catMap, onSave, onClose }) {
 }
 
 // ─── Detail Drawer ───────────────────────────────────────────────────────────
-function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal, onLightbox }) {
+function DetailDrawer({ group, catMap, onClose, onDeleteItem, onEditItem, onSetGoal, onLightbox }) {
   const toBuy=Math.max(0,(group.goal??0)-group.owned);
   const hasGoal=(group.goal??0)>0;
   const cat=catMap[group.type]||{};
@@ -311,14 +308,11 @@ function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal, onLight
           {group.items.map(item=>(
             <div key={item.id} style={{borderRadius:16,overflow:"hidden",background:"#faf8ff",border:"1.5px solid #f0eaff",position:"relative"}}>
               <div
-                onClick={item.image ? e=>{e.stopPropagation();onLightbox(item.image);} : undefined}
+                onClick={item.image?e=>{e.stopPropagation();onLightbox(item.image);}:undefined}
                 style={{height:90,background:cat.color||"#f0eaff",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:item.image?"zoom-in":"default",position:"relative"}}
               >
                 {item.image
-                  ? <>
-                      <img src={item.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <div style={{position:"absolute",bottom:5,right:5,background:"rgba(0,0,0,0.35)",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>🔍</div>
-                    </>
+                  ? <><img src={item.image} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} /><div style={{position:"absolute",bottom:5,right:5,background:"rgba(0,0,0,0.35)",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>🔍</div></>
                   : <span style={{fontSize:32}}>{cat.emoji||"📦"}</span>
                 }
               </div>
@@ -326,7 +320,11 @@ function DetailDrawer({ group, catMap, onClose, onDeleteItem, onSetGoal, onLight
                 <div style={{fontSize:12,fontWeight:800,color:"#2d1f5e",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{item.label||item.type}</div>
                 <div style={{fontSize:11,color:"#b0a0d0",fontWeight:700,marginTop:1}}>qty: {item.qty}</div>
               </div>
-              <button onClick={()=>onDeleteItem(item.id)} style={{position:"absolute",top:6,right:6,width:22,height:22,borderRadius:"50%",background:"rgba(255,255,255,0.85)",border:"none",cursor:"pointer",fontSize:11,color:"#aaa",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+              {/* Edit & Delete buttons */}
+              <div style={{display:"flex",gap:4,padding:"0 8px 8px"}}>
+                <button onClick={()=>onEditItem(item)} style={{flex:1,padding:"4px 0",borderRadius:8,border:"none",background:"#f0eaff",color:"#7c3aed",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>✏️ Edit</button>
+                <button onClick={()=>onDeleteItem(item.id)} style={{flex:1,padding:"4px 0",borderRadius:8,border:"none",background:"#fff0f0",color:"#f87171",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"'Nunito',sans-serif"}}>✕ Delete</button>
+              </div>
             </div>
           ))}
         </div>
@@ -432,7 +430,7 @@ const Empty = ({icon,title,sub}) => (
 
 // ─── Main App ────────────────────────────────────────────────────────────────
 export default function App() {
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState([]);
   const [sizes] = useState(DEFAULT_SIZES);
   const [items, setItems] = useState([]);
   const [goals, setGoals] = useState({});
@@ -440,6 +438,7 @@ export default function App() {
   const [tab, setTab] = useState("wardrobe");
   const [screen, setScreen] = useState("main");
   const [showAdd, setShowAdd] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const [detail, setDetail] = useState(null);
   const [goalFor, setGoalFor] = useState(null);
   const [filterType, setFilterType] = useState("All");
@@ -448,53 +447,62 @@ export default function App() {
   const [showSort, setShowSort] = useState(false);
   const [lightbox, setLightbox] = useState(null);
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      const [{ data: itemsData }, { data: goalsData }] = await Promise.all([
-        supabase.from("items").select("*").order("created_at", { ascending: false }),
-        supabase.from("goals").select("*"),
-      ]);
-      if (itemsData) setItems(itemsData);
-      if (goalsData) {
-        const g = {};
-        for (const row of goalsData) g[row.id] = row.goal;
-        setGoals(g);
-      }
-      setLoading(false);
+  async function loadAll() {
+    setLoading(true);
+    const [{ data: catsData }, { data: itemsData }, { data: goalsData }] = await Promise.all([
+      supabase.from("categories").select("*").order("sort_order"),
+      supabase.from("items").select("*").order("created_at", { ascending: false }),
+      supabase.from("goals").select("*"),
+    ]);
+    if (catsData) setCategories(catsData);
+    if (itemsData) setItems(itemsData);
+    if (goalsData) {
+      const g = {};
+      for (const row of goalsData) g[row.id] = row.goal;
+      setGoals(g);
     }
-    load();
+    setLoading(false);
+  }
 
+  useEffect(() => {
+    loadAll();
     const channel = supabase.channel("realtime-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "items" }, () => load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "goals" }, () => load())
+      .on("postgres_changes", { event:"*", schema:"public", table:"items" }, loadAll)
+      .on("postgres_changes", { event:"*", schema:"public", table:"goals" }, loadAll)
+      .on("postgres_changes", { event:"*", schema:"public", table:"categories" }, loadAll)
       .subscribe();
-
     return () => supabase.removeChannel(channel);
   }, []);
 
   async function addItem(item) {
-    const { data } = await supabase.from("items").insert([{
-      id: item.id, type: item.type, size: item.size,
-      qty: item.qty, label: item.label, image: item.image,
-    }]).select();
-    if (data) setItems(prev => [data[0], ...prev]);
+    await supabase.from("items").insert([{
+      id: item.id||Date.now(), type:item.type, size:item.size,
+      qty:item.qty, label:item.label, image:item.image,
+    }]);
+    await loadAll();
+  }
+
+  async function saveItem(item) {
+    await supabase.from("items").update({
+      type:item.type, size:item.size, qty:item.qty, label:item.label, image:item.image
+    }).eq("id", item.id);
+    await loadAll();
   }
 
   async function deleteItem(id) {
-    const item = items.find(i => i.id === id);
+    const item = items.find(i=>i.id===id);
     if (item?.image) {
       const path = item.image.split(`/storage/v1/object/public/images/`)[1];
       if (path) await supabase.storage.from("images").remove([path]);
     }
     await supabase.from("items").delete().eq("id", id);
-    setItems(prev => prev.filter(i => i.id !== id));
+    await loadAll();
   }
 
   async function saveGoal(type, size, goal) {
     const k = groupKey(type, size);
-    await supabase.from("goals").upsert([{ id: k, goal }]);
-    setGoals(prev => ({ ...prev, [k]: goal }));
+    await supabase.from("goals").upsert([{ id:k, goal }]);
+    setGoals(prev=>({...prev,[k]:goal}));
   }
 
   const catMap = Object.fromEntries(categories.map(c=>[c.name,c]));
@@ -505,12 +513,10 @@ export default function App() {
 
   const usedTypes = ["All",...categories.filter(c=>Object.values(groups).some(g=>g.type===c.name)).map(c=>c.name)];
   const usedSizes = ["All",...sizes.filter(s=>Object.values(groups).some(g=>g.size===s))];
-
   const filtered = sortGroups(
     Object.values(groups).filter(g=>(filterType==="All"||g.type===filterType)&&(filterSize==="All"||g.size===filterSize)),
     sortBy
   );
-
   const totalOwned = Object.values(groups).reduce((s,g)=>s+g.owned,0);
   const totalToBuy = Object.values(groups).filter(g=>g.goal>0&&g.owned<g.goal).reduce((s,g)=>s+Math.max(0,g.goal-g.owned),0);
   const currentSort = SORT_OPTIONS.find(o=>o.value===sortBy);
@@ -603,8 +609,7 @@ export default function App() {
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {SORT_OPTIONS.map(opt=>(
                 <button key={opt.value} onClick={()=>{setSortBy(opt.value);setShowSort(false);}} style={{padding:"12px 16px",borderRadius:14,border:"none",textAlign:"left",background:sortBy===opt.value?"#f0eaff":"#faf8ff",color:sortBy===opt.value?"#7c3aed":"#2d1f5e",fontWeight:sortBy===opt.value?900:700,fontSize:14,cursor:"pointer",fontFamily:"'Nunito',sans-serif",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  {opt.label}
-                  {sortBy===opt.value&&<span style={{color:"#7c3aed"}}>✓</span>}
+                  {opt.label}{sortBy===opt.value&&<span style={{color:"#7c3aed"}}>✓</span>}
                 </button>
               ))}
             </div>
@@ -612,9 +617,22 @@ export default function App() {
         </Overlay>
       )}
 
-      {showAdd&&<AddModal categories={categories} sizes={sizes} onAdd={addItem} onClose={()=>setShowAdd(false)} />}
-      {liveDetail&&!goalFor&&(
-        <DetailDrawer group={liveDetail} catMap={catMap} onClose={()=>setDetail(null)} onDeleteItem={id=>{deleteItem(id);if(liveDetail.items.length<=1)setDetail(null);}} onSetGoal={()=>setGoalFor(liveDetail)} onLightbox={src=>setLightbox(src)} />
+      {showAdd&&<ItemModal categories={categories} sizes={sizes} onSave={item=>addItem({...item,id:Date.now()})} onClose={()=>setShowAdd(false)} />}
+
+      {editingItem&&(
+        <ItemModal categories={categories} sizes={sizes} item={editingItem} onSave={saveItem} onClose={()=>setEditingItem(null)} />
+      )}
+
+      {liveDetail&&!goalFor&&!editingItem&&(
+        <DetailDrawer
+          group={liveDetail}
+          catMap={catMap}
+          onClose={()=>setDetail(null)}
+          onDeleteItem={async id=>{await deleteItem(id);if(liveDetail.items.length<=1)setDetail(null);}}
+          onEditItem={item=>setEditingItem(item)}
+          onSetGoal={()=>setGoalFor(liveDetail)}
+          onLightbox={src=>setLightbox(src)}
+        />
       )}
       {goalFor&&(
         <GoalModal group={goalFor} catMap={catMap} onSave={goal=>saveGoal(goalFor.type,goalFor.size,goal)} onClose={()=>setGoalFor(null)} />
